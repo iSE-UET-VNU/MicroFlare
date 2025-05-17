@@ -166,16 +166,3 @@ x = microflare.randn((2, 3))
 x_dropped = dropout(x)
 print(x_dropped)
 ```
-
---------- 
-## Limitations
-
-- No GPU support — runs on CPU only.
-
-- Limited layers — no batch norm, no advanced RNN/LSTM yet.
-
-- Basic automatic differentiation — no dynamic graph modifications.
-
-- No data loading or batching utilities.
-
-- Not optimized for speed or memory.
