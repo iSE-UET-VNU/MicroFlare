@@ -998,37 +998,507 @@ class RNN(object):
 
 class LSTM(object):
     def __init__(self, input_size, hidden_size):
-        raise NotImplementedError
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        
+        # Input-to-hidden weights for input, forget, cell, and output gates
+        self.W_ii = Tensor([[Value(random.uniform(-1, 1)) for _ in range(input_size)] for _ in range(hidden_size)])
+        self.W_if = Tensor([[Value(random.uniform(-1, 1)) for _ in range(input_size)] for _ in range(hidden_size)])
+        self.W_ig = Tensor([[Value(random.uniform(-1, 1)) for _ in range(input_size)] for _ in range(hidden_size)])
+        self.W_io = Tensor([[Value(random.uniform(-1, 1)) for _ in range(input_size)] for _ in range(hidden_size)])
+        
+        # Hidden-to-hidden weights for input, forget, cell, and output gates
+        self.W_hi = Tensor([[Value(random.uniform(-1, 1)) for _ in range(hidden_size)] for _ in range(hidden_size)])
+        self.W_hf = Tensor([[Value(random.uniform(-1, 1)) for _ in range(hidden_size)] for _ in range(hidden_size)])
+        self.W_hg = Tensor([[Value(random.uniform(-1, 1)) for _ in range(hidden_size)] for _ in range(hidden_size)])
+        self.W_ho = Tensor([[Value(random.uniform(-1, 1)) for _ in range(hidden_size)] for _ in range(hidden_size)])
+        
+        # Biases for all gates
+        self.b_i = Tensor([Value(0.0) for _ in range(hidden_size)])
+        self.b_f = Tensor([Value(0.0) for _ in range(hidden_size)])
+        self.b_g = Tensor([Value(0.0) for _ in range(hidden_size)])
+        self.b_o = Tensor([Value(0.0) for _ in range(hidden_size)])
 
     def __call__(self, x: "Tensor", h_prev=None, c_prev=None):
-        raise NotImplementedError
+        seq_len, input_size = x.shape
+        
+        if h_prev is None:
+            h_prev = Tensor([Value(0.0) for _ in range(self.hidden_size)])
+        if c_prev is None:
+            c_prev = Tensor([Value(0.0) for _ in range(self.hidden_size)])
+        
+        hidden_states = []
+        h_t = h_prev
+        c_t = c_prev
+        
+        for t in range(seq_len):
+            x_t = x[t]
+            
+            # Input gate
+            i_t_data = []
+            for i in range(self.hidden_size):
+                s = Value(0.0)
+                for j in range(self.input_size):
+                    s += self.W_ii.data[i][j] * x_t.data[j]
+                for j in range(self.hidden_size):
+                    s += self.W_hi.data[i][j] * h_t.data[j]
+                s += self.b_i.data[i]
+                i_t_data.append(s.sigmoid())
+            i_t = Tensor(i_t_data)
+            
+            # Forget gate
+            f_t_data = []
+            for i in range(self.hidden_size):
+                s = Value(0.0)
+                for j in range(self.input_size):
+                    s += self.W_if.data[i][j] * x_t.data[j]
+                for j in range(self.hidden_size):
+                    s += self.W_hf.data[i][j] * h_t.data[j]
+                s += self.b_f.data[i]
+                f_t_data.append(s.sigmoid())
+            f_t = Tensor(f_t_data)
+            
+            # Cell gate (candidate values)
+            g_t_data = []
+            for i in range(self.hidden_size):
+                s = Value(0.0)
+                for j in range(self.input_size):
+                    s += self.W_ig.data[i][j] * x_t.data[j]
+                for j in range(self.hidden_size):
+                    s += self.W_hg.data[i][j] * h_t.data[j]
+                s += self.b_g.data[i]
+                g_t_data.append(s.tanh())
+            g_t = Tensor(g_t_data)
+            
+            # Cell state update
+            c_t_data = []
+            for i in range(self.hidden_size):
+                c_t_data.append(f_t.data[i] * c_t.data[i] + i_t.data[i] * g_t.data[i])
+            c_t = Tensor(c_t_data)
+            
+            # Output gate
+            o_t_data = []
+            for i in range(self.hidden_size):
+                s = Value(0.0)
+                for j in range(self.input_size):
+                    s += self.W_io.data[i][j] * x_t.data[j]
+                for j in range(self.hidden_size):
+                    s += self.W_ho.data[i][j] * h_t.data[j]
+                s += self.b_o.data[i]
+                o_t_data.append(s.sigmoid())
+            o_t = Tensor(o_t_data)
+            
+            # Hidden state update
+            h_t_data = []
+            for i in range(self.hidden_size):
+                h_t_data.append(o_t.data[i] * c_t.data[i].tanh())
+            h_t = Tensor(h_t_data)
+            
+            hidden_states.append(h_t)
+        
+        return Tensor([h.data for h in hidden_states])
 
     def parameters(self):
-        raise NotImplementedError
+        params = []
+        for row in self.W_ii.data:
+            params.extend(row)
+        for row in self.W_if.data:
+            params.extend(row)
+        for row in self.W_ig.data:
+            params.extend(row)
+        for row in self.W_io.data:
+            params.extend(row)
+        for row in self.W_hi.data:
+            params.extend(row)
+        for row in self.W_hf.data:
+            params.extend(row)
+        for row in self.W_hg.data:
+            params.extend(row)
+        for row in self.W_ho.data:
+            params.extend(row)
+        params.extend(self.b_i.data)
+        params.extend(self.b_f.data)
+        params.extend(self.b_g.data)
+        params.extend(self.b_o.data)
+        return params
 
 
 class Transformer(object):
-    def __init__(self):
-        raise NotImplementedError
+    def __init__(self, d_model=512, num_heads=8, d_ff=2048, num_encoder_layers=6, num_decoder_layers=6):
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.num_encoder_layers = num_encoder_layers
+        self.num_decoder_layers = num_decoder_layers
+        
+        # Encoder and decoder components
+        self.encoder = TransformerEncoder(d_model, num_heads, d_ff, num_encoder_layers)
+        self.decoder = TransformerDecoder(d_model, num_heads, d_ff, num_decoder_layers)
+        
+        # Output projection layer
+        self.output_projection = Linear(d_model, d_model, bias=False)
 
-    def __call__(self, *args, **kwds):
-        raise NotImplementedError
+    def __call__(self, src: Tensor, tgt: Tensor, src_mask=None, tgt_mask=None, memory_mask=None):
+        """
+        Forward pass through transformer.
+        
+        Args:
+            src: Source sequence (batch_size, src_seq_len, d_model)
+            tgt: Target sequence (batch_size, tgt_seq_len, d_model)
+            src_mask: Mask for source sequence
+            tgt_mask: Mask for target sequence (causal mask for autoregressive)
+            memory_mask: Mask for cross-attention
+        
+        Returns:
+            output: Decoder output (batch_size, tgt_seq_len, d_model)
+        """
+        # Encode source
+        encoder_output = self.encoder(src, src_mask)
+        
+        # Decode with encoder output
+        decoder_output = self.decoder(tgt, encoder_output, tgt_mask, memory_mask)
+        
+        # Project to output dimension
+        output = self.output_projection(decoder_output)
+        
+        return output
+
+    def parameters(self):
+        params = []
+        params.extend(self.encoder.parameters())
+        params.extend(self.decoder.parameters())
+        params.extend(self.output_projection.parameters())
+        return params
 
 
 class TransformerEncoder(object):
-    def __init__(self):
-        raise NotImplementedError
+    def __init__(self, d_model, num_heads, d_ff, num_layers):
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.num_layers = num_layers
+        
+        # Multi-head attention and feed-forward layers for each encoder block
+        self.attention_weights = []
+        self.feed_forward_weights = []
+        self.layer_norms = []
+        
+        for _ in range(num_layers):
+            # Attention weights: Q, K, V projections
+            self.attention_weights.append({
+                'W_q': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_k': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_v': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_o': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)])
+            })
+            
+            # Feed-forward weights: two linear layers
+            self.feed_forward_weights.append({
+                'W1': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_ff)]),
+                'b1': Tensor([Value(0.0) for _ in range(d_ff)]),
+                'W2': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_ff)] for _ in range(d_model)]),
+                'b2': Tensor([Value(0.0) for _ in range(d_model)])
+            })
+            
+            # Layer normalization parameters
+            self.layer_norms.append({
+                'gamma': Tensor([Value(1.0) for _ in range(d_model)]),
+                'beta': Tensor([Value(0.0) for _ in range(d_model)])
+            })
 
-    def __call__(self, *args, **kwds):
-        raise NotImplementedError
+    def _scaled_dot_product_attention(self, Q: Tensor, K: Tensor, V: Tensor, mask=None):
+        # Compute attention scores: (Q @ K^T) / sqrt(d_k)
+        batch_size, seq_len, d_k = Q.shape
+        
+        scores_list = []
+        for q_seq in Q.data:
+            row_scores = []
+            for q in q_seq:
+                score_row = []
+                for k_seq in K.data:
+                    s = Value(0.0)
+                    for k in k_seq:
+                        dot = s + q.data * k.data if isinstance(q, Value) and isinstance(k, Value) else s
+                        s = dot
+                    score_row.append(s / math.sqrt(d_k))
+                row_scores.append(score_row)
+            scores_list.append(row_scores)
+        
+        # Simplified softmax for attention (approximate)
+        attention_weights = []
+        for scores in scores_list:
+            weighted = []
+            for score_row in scores:
+                max_score = max([s.data for s in score_row]) if score_row else 0
+                exp_scores = [Value(math.exp(s.data - max_score)) for s in score_row]
+                sum_exp = sum([e.data for e in exp_scores])
+                weights = [e / Value(sum_exp) for e in exp_scores]
+                weighted.append(weights)
+            attention_weights.append(weighted)
+        
+        # Apply attention to values
+        output = []
+        for b, attn_weights in enumerate(attention_weights):
+            out_seq = []
+            for pos, weight_row in enumerate(attn_weights):
+                weighted_v = Value(0.0)
+                for t, w in enumerate(weight_row):
+                    weighted_v += w * V.data[b][t]
+                out_seq.append(weighted_v)
+            output.append(out_seq)
+        
+        return Tensor(output)
+
+    def __call__(self, x: Tensor, mask=None):
+        # x shape: (batch_size, seq_len, d_model)
+        output = x
+        
+        for layer_idx in range(self.num_layers):
+            # Multi-head attention (simplified to single head)
+            attn_weights = self.attention_weights[layer_idx]
+            Q = output @ attn_weights['W_q']
+            K = output @ attn_weights['W_k']
+            V = output @ attn_weights['W_v']
+            
+            attn_output = self._scaled_dot_product_attention(Q, K, V, mask)
+            attn_output = attn_output @ attn_weights['W_o']
+            
+            # Add & Norm
+            output_data = []
+            for i, (out_val, attn_val) in enumerate(zip(output.data, attn_output.data)):
+                merged = []
+                for o, a in zip(out_val, attn_val):
+                    merged.append(o + a)
+                output_data.append(merged)
+            output = Tensor(output_data)
+            
+            # Feed-forward network
+            ff_weights = self.feed_forward_weights[layer_idx]
+            ff_hidden = output @ ff_weights['W1']
+            
+            # Add bias and apply ReLU
+            ff_hidden_data = []
+            for row in ff_hidden.data:
+                new_row = []
+                for val in row:
+                    new_row.append((val + ff_weights['b1'].data[0]).relu() if isinstance(val, Value) else val)
+                ff_hidden_data.append(new_row)
+            ff_hidden = Tensor(ff_hidden_data)
+            
+            ff_output = ff_hidden @ ff_weights['W2']
+            
+            ff_output_data = []
+            for row in ff_output.data:
+                new_row = []
+                for val, b in zip(row, ff_weights['b2'].data):
+                    new_row.append(val + b)
+                ff_output_data.append(new_row)
+            ff_output = Tensor(ff_output_data)
+            
+            output_data = []
+            for out_val, ff_val in zip(output.data, ff_output.data):
+                merged = []
+                for o, f in zip(out_val, ff_val):
+                    merged.append(o + f)
+                output_data.append(merged)
+            output = Tensor(output_data)
+        
+        return output
+
+    def parameters(self):
+        params = []
+        for layer_attn in self.attention_weights:
+            for w_name in ['W_q', 'W_k', 'W_v', 'W_o']:
+                for row in layer_attn[w_name].data:
+                    params.extend(row)
+        
+        for layer_ff in self.feed_forward_weights:
+            for row in layer_ff['W1'].data:
+                params.extend(row)
+            params.extend(layer_ff['b1'].data)
+            for row in layer_ff['W2'].data:
+                params.extend(row)
+            params.extend(layer_ff['b2'].data)
+        
+        for layer_ln in self.layer_norms:
+            params.extend(layer_ln['gamma'].data)
+            params.extend(layer_ln['beta'].data)
+        
+        return params
 
 
 class TransformerDecoder(object):
-    def __init__(self):
-        raise NotImplementedError
+    def __init__(self, d_model, num_heads, d_ff, num_layers):
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.num_layers = num_layers
+        
+        self.self_attention_weights = []
+        self.cross_attention_weights = []
+        self.feed_forward_weights = []
+        self.layer_norms = []
+        
+        for _ in range(num_layers):
+            self.self_attention_weights.append({
+                'W_q': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_k': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_v': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_o': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)])
+            })
+            
+            self.cross_attention_weights.append({
+                'W_q': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_k': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_v': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)]),
+                'W_o': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_model)])
+            })
+            
+            self.feed_forward_weights.append({
+                'W1': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_model)] for _ in range(d_ff)]),
+                'b1': Tensor([Value(0.0) for _ in range(d_ff)]),
+                'W2': Tensor([[Value(random.uniform(-1, 1)) for _ in range(d_ff)] for _ in range(d_model)]),
+                'b2': Tensor([Value(0.0) for _ in range(d_model)])
+            })
+            
+            self.layer_norms.append({
+                'gamma': Tensor([Value(1.0) for _ in range(d_model)]),
+                'beta': Tensor([Value(0.0) for _ in range(d_model)])
+            })
 
-    def __call__(self, *args, **kwds):
-        raise NotImplementedError
+    def _scaled_dot_product_attention(self, Q: Tensor, K: Tensor, V: Tensor, mask=None):
+        batch_size, seq_len, d_k = Q.shape
+        
+        scores_list = []
+        for q_seq in Q.data:
+            row_scores = []
+            for q in q_seq:
+                score_row = []
+                for k_seq in K.data:
+                    s = Value(0.0)
+                    for k in k_seq:
+                        dot = s + q.data * k.data if isinstance(q, Value) and isinstance(k, Value) else s
+                        s = dot
+                    score_row.append(s / math.sqrt(d_k))
+                row_scores.append(score_row)
+            scores_list.append(row_scores)
+        
+        attention_weights = []
+        for scores in scores_list:
+            weighted = []
+            for score_row in scores:
+                max_score = max([s.data for s in score_row]) if score_row else 0
+                exp_scores = [Value(math.exp(s.data - max_score)) for s in score_row]
+                sum_exp = sum([e.data for e in exp_scores])
+                weights = [e / Value(sum_exp) for e in exp_scores]
+                weighted.append(weights)
+            attention_weights.append(weighted)
+        
+        output = []
+        for b, attn_weights in enumerate(attention_weights):
+            out_seq = []
+            for pos, weight_row in enumerate(attn_weights):
+                weighted_v = Value(0.0)
+                for t, w in enumerate(weight_row):
+                    weighted_v += w * V.data[b][t]
+                out_seq.append(weighted_v)
+            output.append(out_seq)
+        
+        return Tensor(output)
+
+    def __call__(self, x: Tensor, encoder_output: Tensor, self_mask=None, cross_mask=None):
+        output = x
+        
+        for layer_idx in range(self.num_layers):
+            # Self-attention
+            self_attn_weights = self.self_attention_weights[layer_idx]
+            Q_self = output @ self_attn_weights['W_q']
+            K_self = output @ self_attn_weights['W_k']
+            V_self = output @ self_attn_weights['W_v']
+            
+            self_attn_output = self._scaled_dot_product_attention(Q_self, K_self, V_self, self_mask)
+            self_attn_output = self_attn_output @ self_attn_weights['W_o']
+            
+            output_data = []
+            for out_val, attn_val in zip(output.data, self_attn_output.data):
+                merged = []
+                for o, a in zip(out_val, attn_val):
+                    merged.append(o + a)
+                output_data.append(merged)
+            output = Tensor(output_data)
+            
+            cross_attn_weights = self.cross_attention_weights[layer_idx]
+            Q_cross = output @ cross_attn_weights['W_q']
+            K_cross = encoder_output @ cross_attn_weights['W_k']
+            V_cross = encoder_output @ cross_attn_weights['W_v']
+            
+            cross_attn_output = self._scaled_dot_product_attention(Q_cross, K_cross, V_cross, cross_mask)
+            cross_attn_output = cross_attn_output @ cross_attn_weights['W_o']
+            
+            output_data = []
+            for out_val, attn_val in zip(output.data, cross_attn_output.data):
+                merged = []
+                for o, a in zip(out_val, attn_val):
+                    merged.append(o + a)
+                output_data.append(merged)
+            output = Tensor(output_data)
+            
+            ff_weights = self.feed_forward_weights[layer_idx]
+            ff_hidden = output @ ff_weights['W1']
+            
+            ff_hidden_data = []
+            for row in ff_hidden.data:
+                new_row = []
+                for val in row:
+                    new_row.append((val + ff_weights['b1'].data[0]).relu() if isinstance(val, Value) else val)
+                ff_hidden_data.append(new_row)
+            ff_hidden = Tensor(ff_hidden_data)
+            
+            ff_output = ff_hidden @ ff_weights['W2']
+            
+            ff_output_data = []
+            for row in ff_output.data:
+                new_row = []
+                for val, b in zip(row, ff_weights['b2'].data):
+                    new_row.append(val + b)
+                ff_output_data.append(new_row)
+            ff_output = Tensor(ff_output_data)
+            
+            output_data = []
+            for out_val, ff_val in zip(output.data, ff_output.data):
+                merged = []
+                for o, f in zip(out_val, ff_val):
+                    merged.append(o + f)
+                output_data.append(merged)
+            output = Tensor(output_data)
+        
+        return output
+
+    def parameters(self):
+        params = []
+        for layer_attn in self.self_attention_weights:
+            for w_name in ['W_q', 'W_k', 'W_v', 'W_o']:
+                for row in layer_attn[w_name].data:
+                    params.extend(row)
+        
+        for layer_attn in self.cross_attention_weights:
+            for w_name in ['W_q', 'W_k', 'W_v', 'W_o']:
+                for row in layer_attn[w_name].data:
+                    params.extend(row)
+        
+        for layer_ff in self.feed_forward_weights:
+            for row in layer_ff['W1'].data:
+                params.extend(row)
+            params.extend(layer_ff['b1'].data)
+            for row in layer_ff['W2'].data:
+                params.extend(row)
+            params.extend(layer_ff['b2'].data)
+        
+        for layer_ln in self.layer_norms:
+            params.extend(layer_ln['gamma'].data)
+            params.extend(layer_ln['beta'].data)
+        
+        return params
 
 
 class SGD(object):

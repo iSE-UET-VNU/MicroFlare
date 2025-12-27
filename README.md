@@ -12,7 +12,8 @@
 - Tensor and automatic differentiation via `Value` and `Tensor` classes  
 - Neural network layers: `Linear`, `Conv1d`, `Conv2d`  
 - Activation functions: `ReLU`, `Sigmoid`, `Tanh`  
-- Recurrent layers: `RNN` (LSTM coming soon)  
+- Recurrent layers: `RNN`, `LSTM`  
+- Transformer layers: `Transformer`, `TransformerEncoder`, `TransformerDecoder`
 - Optimizers: `SGD`, `Adam`  
 - Loss functions: `MSELoss`, `L1Loss`, `L2Loss`  
 - Utility modules: `Sequential`, `DropOut`  
@@ -40,6 +41,14 @@ pip install microflare
 - ReLU, Sigmoid, Tanh: Activation functions as callable modules.
 
 - RNN: Basic recurrent neural network layer.
+
+- LSTM: Long Short-Term Memory layer with input, forget, cell, and output gates.
+
+- Transformer: Complete transformer architecture with encoder and decoder.
+
+- TransformerEncoder: Multi-layer encoder with self-attention and feed-forward networks.
+
+- TransformerDecoder: Multi-layer decoder with self-attention, cross-attention, and feed-forward networks.
 
 - Sequential: Container to chain layers and modules sequentially.
 
@@ -166,3 +175,85 @@ x = microflare.randn((2, 3))
 x_dropped = dropout(x)
 print(x_dropped)
 ```
+### LSTM Layer
+```python
+import microflare
+
+# Create LSTM layer
+lstm = microflare.LSTM(input_size=10, hidden_size=20)
+
+# Input shape: (sequence_length, input_size)
+x = microflare.randn((5, 10))
+
+# Forward pass through LSTM
+output = lstm(x)  # output shape: (sequence_length, hidden_size)
+
+# Get LSTM parameters for optimization
+params = lstm.parameters()
+optimizer = microflare.Adam(params, lr=0.001)
+```
+
+### Transformer Architecture
+```python
+import microflare
+
+# Create transformer with encoder-decoder architecture
+transformer = microflare.Transformer(
+    d_model=512,              # embedding dimension
+    num_heads=8,              # number of attention heads
+    d_ff=2048,                # feed-forward hidden dimension
+    num_encoder_layers=6,     # number of encoder stacks
+    num_decoder_layers=6      # number of decoder stacks
+)
+
+# Source and target sequences
+# Shape: (batch_size, sequence_length, d_model)
+src = microflare.randn((2, 10, 512))
+tgt = microflare.randn((2, 8, 512))
+
+# Forward pass
+output = transformer(src, tgt)  # output shape: (2, 8, 512)
+
+# Get all transformer parameters
+params = transformer.parameters()
+optimizer = microflare.Adam(params, lr=0.0001)
+```
+
+### TransformerEncoder (Standalone)
+```python
+import microflare
+
+# Create encoder
+encoder = microflare.TransformerEncoder(
+    d_model=512,
+    num_heads=8,
+    d_ff=2048,
+    num_layers=6
+)
+
+# Input shape: (batch_size, sequence_length, d_model)
+x = microflare.randn((2, 10, 512))
+
+# Encode sequence
+encoded = encoder(x)
+print(encoded.shape)  # (2, 10, 512)
+```
+
+### TransformerDecoder (Standalone with Encoder Output)
+```python
+import microflare
+
+# Create encoder and decoder
+encoder = microflare.TransformerEncoder(512, 8, 2048, 6)
+decoder = microflare.TransformerDecoder(512, 8, 2048, 6)
+
+# Encode source
+src = microflare.randn((2, 10, 512))
+encoder_output = encoder(src)
+
+# Decode with encoder output
+tgt = microflare.randn((2, 8, 512))
+decoded = decoder(tgt, encoder_output)
+print(decoded.shape)  # (2, 8, 512)
+```
+````
