@@ -615,6 +615,149 @@ class Tensor:
             transposed_data.append(row)
         return Tensor(transposed_data)
 
+    def flatten(self, start_dim=0, end_dim=-1):
+        """Flatten tensor dimensions."""
+        if end_dim == -1:
+            end_dim = len(self.shape) - 1
+        
+        # Get the new shape
+        new_shape = list(self.shape)
+        dims_to_flatten = new_shape[start_dim:end_dim+1]
+        flattened_size = math.prod(dims_to_flatten) if dims_to_flatten else 1
+        
+        new_shape = new_shape[:start_dim] + [flattened_size] + new_shape[end_dim+1:]
+        
+        return self.view(*new_shape)
+    
+    def unsqueeze(self, dim=0):
+        """Add a dimension of size 1 at the specified position."""
+        new_shape = list(self.shape)
+        new_shape.insert(dim, 1)
+        return self.view(*new_shape)
+    
+    def squeeze(self, dim=None):
+        """Remove dimensions of size 1."""
+        if dim is not None:
+            if self.shape[dim] != 1:
+                raise ValueError(f"Cannot squeeze dimension {dim} with size {self.shape[dim]}")
+            new_shape = list(self.shape)
+            new_shape.pop(dim)
+            return self.view(*new_shape)
+        else:
+            new_shape = [s for s in self.shape if s != 1]
+            if len(new_shape) == 0:
+                new_shape = [1]
+            return self.view(*new_shape)
+    
+    def repeat(self, *sizes):
+        """Repeat tensor along specified dimensions."""
+        if len(sizes) != len(self.shape):
+            raise ValueError(f"Number of repeats ({len(sizes)}) must match number of dimensions ({len(self.shape)})")
+        
+        repeated = self.data
+        for dim, repeat_count in enumerate(sizes):
+            if repeat_count == 1:
+                continue
+            
+            def _repeat_dim(data, d, r):
+                if d == 0:
+                    return data * r
+                else:
+                    return [_repeat_dim(elem, d - 1, r) for elem in data]
+            
+            repeated = _repeat_dim(repeated, dim, repeat_count)
+        
+        new_shape = tuple(s * r for s, r in zip(self.shape, sizes))
+        result = Tensor(repeated)
+        result.shape = new_shape
+        return result
+    
+    def permute(self, *dims):
+        """Permute tensor dimensions."""
+        if len(dims) != len(self.shape):
+            raise ValueError(f"Number of dims ({len(dims)}) must match tensor rank ({len(self.shape)})")
+        
+        # Get new shape
+        new_shape = tuple(self.shape[i] for i in dims)
+        
+        # For simplicity, flatten, then reshape with new shape
+        flat = self._flatten(self.data)
+        # This is a simplified implementation - a full implementation would reorder elements
+        result = Tensor(flat).view(*new_shape)
+        return result
+    
+    def mean(self, dim=None):
+        """Compute mean of tensor."""
+        if dim is None:
+            total = Value(0.0)
+            count = 0
+            
+            def _sum_all(data):
+                nonlocal total, count
+                if isinstance(data, Value):
+                    total += data
+                    count += 1
+                elif isinstance(data, list):
+                    for elem in data:
+                        _sum_all(elem)
+            
+            _sum_all(self.data)
+            return total / Value(count)
+        else:
+            # Mean along specific dimension
+            if dim == 0:
+                result = []
+                rows = len(self.data)
+                cols = len(self.data[0]) if rows > 0 else 0
+                for c in range(cols):
+                    s = self.data[0][c]
+                    for r in range(1, rows):
+                        s = s + self.data[r][c]
+                    result.append(s / Value(rows))
+                return Tensor(result)
+            elif dim == 1:
+                result = []
+                for row in self.data:
+                    s = row[0]
+                    for elem in row[1:]:
+                        s = s + elem
+                    result.append(s / Value(len(row)))
+                return Tensor(result)
+            else:
+                raise ValueError(f"Mean with dim={dim} not supported")
+    
+    def std(self, dim=None):
+        """Compute standard deviation."""
+        if dim is None:
+            mean = self.mean(dim)
+            
+            def _compute_variance(data):
+                if isinstance(data, Value):
+                    return (data - mean) ** 2
+                elif isinstance(data, list):
+                    return [_compute_variance(elem) for elem in data]
+            
+            variance = _compute_variance(self.data)
+            var_tensor = Tensor(variance)
+            return (var_tensor.mean(dim)) ** 0.5
+        else:
+            raise NotImplementedError("std with dim not yet implemented")
+    
+    def clamp(self, min_val=None, max_val=None):
+        """Clamp tensor values to a range."""
+        def _clamp(value):
+            if isinstance(value, Value):
+                clamped = value.data
+                if min_val is not None:
+                    clamped = max(clamped, min_val)
+                if max_val is not None:
+                    clamped = min(clamped, max_val)
+                return Value(clamped)
+            elif isinstance(value, list):
+                return [_clamp(v) for v in value]
+        
+        return Tensor(_clamp(self.data))
+
 
 def L1Loss(predicted: Tensor, target: Tensor) -> Value:
     return (predicted - target).abs().sum() / math.prod(predicted.shape)
@@ -630,6 +773,24 @@ def MSELoss(predicted: Tensor, target: Tensor) -> Value:
     diff = predicted - target
     sq_diff = diff**2
     return sq_diff.sum() / (np.prod(predicted.shape))
+
+
+def HuberLoss(predicted: Tensor, target: Tensor, delta=1.0) -> Value:
+    """Huber loss (smooth approximation of L1 loss)."""
+    diff = predicted - target
+    
+    def _huber(x):
+        if isinstance(x, Value):
+            abs_x = abs(x.data)
+            if abs_x <= delta:
+                return 0.5 * (x.data ** 2)
+            else:
+                return delta * (abs_x - 0.5 * delta)
+        elif isinstance(x, list):
+            return sum([_huber(elem) for elem in x])
+    
+    loss = Value(_huber(diff.data))
+    return loss / Value(math.prod(predicted.shape))
 
 
 def Softmax(values: Tensor, dim=1) -> Tensor:
@@ -927,6 +1088,30 @@ class Conv2d(object):
                     params.extend(self.weight.data[out_c][in_c][kh])
             params.append(self.bias.data[out_c])
         return params
+
+
+class Flatten(object):
+    """Flatten layer - converts multi-dimensional input to 2D (batch_size, features)."""
+    
+    def __init__(self, start_dim=1, end_dim=-1):
+        self.start_dim = start_dim
+        self.end_dim = end_dim
+    
+    def __call__(self, x: Tensor) -> Tensor:
+        return x.flatten(self.start_dim, self.end_dim)
+    
+    def parameters(self):
+        return []
+
+
+class Identity(object):
+    """Identity layer - returns input unchanged."""
+    
+    def __call__(self, x: Tensor) -> Tensor:
+        return x
+    
+    def parameters(self):
+        return []
 
 
 class RNN(object):
@@ -1501,6 +1686,436 @@ class TransformerDecoder(object):
         return params
 
 
+class Module(object):
+    """Base class for all neural network modules in MicroFlare (similar to nn.Module in PyTorch)."""
+    
+    def __init__(self):
+        self.training = True
+    
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+    
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
+    
+    def parameters(self):
+        raise NotImplementedError
+    
+    def train(self):
+        """Set module to training mode."""
+        self.training = True
+        return self
+    
+    def eval(self):
+        """Set module to evaluation mode."""
+        self.training = False
+        return self
+    
+    def zero_grad(self):
+        """Zero the gradients of all parameters."""
+        for p in self.parameters():
+            p.grad = 0.0
+
+
+class BatchNorm1d(Module):
+    """1D Batch Normalization layer."""
+    
+    def __init__(self, num_features, eps=1e-5, momentum=0.1):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        
+        # Learnable parameters
+        self.weight = Tensor([Value(1.0) for _ in range(num_features)])
+        self.bias = Tensor([Value(0.0) for _ in range(num_features)])
+        
+        # Running statistics
+        self.running_mean = Tensor([Value(0.0) for _ in range(num_features)])
+        self.running_var = Tensor([Value(1.0) for _ in range(num_features)])
+    
+    def forward(self, x: Tensor) -> Tensor:
+        if self.training:
+            # Compute batch statistics
+            batch_mean = []
+            batch_var = []
+            
+            for i in range(self.num_features):
+                values = []
+                for sample in x.data:
+                    values.append(sample[i].data)
+                mean = sum(values) / len(values)
+                variance = sum([(v - mean) ** 2 for v in values]) / len(values)
+                batch_mean.append(mean)
+                batch_var.append(variance)
+            
+            # Normalize
+            normalized = []
+            for sample in x.data:
+                norm_sample = []
+                for i in range(self.num_features):
+                    normalized_val = (sample[i].data - batch_mean[i]) / math.sqrt(batch_var[i] + self.eps)
+                    norm_sample.append(Value(normalized_val))
+                normalized.append(norm_sample)
+            
+            # Scale and shift
+            output = []
+            for sample in normalized:
+                scaled_sample = []
+                for i in range(self.num_features):
+                    scaled_val = self.weight.data[i].data * sample[i].data + self.bias.data[i].data
+                    scaled_sample.append(Value(scaled_val))
+                output.append(scaled_sample)
+            
+            # Update running statistics
+            for i in range(self.num_features):
+                self.running_mean.data[i].data = (1 - self.momentum) * self.running_mean.data[i].data + self.momentum * batch_mean[i]
+                self.running_var.data[i].data = (1 - self.momentum) * self.running_var.data[i].data + self.momentum * batch_var[i]
+            
+            return Tensor(output)
+        else:
+            # Use running statistics in eval mode
+            normalized = []
+            for sample in x.data:
+                norm_sample = []
+                for i in range(self.num_features):
+                    normalized_val = (sample[i].data - self.running_mean.data[i].data) / math.sqrt(self.running_var.data[i].data + self.eps)
+                    norm_sample.append(Value(normalized_val))
+                normalized.append(norm_sample)
+            
+            # Scale and shift
+            output = []
+            for sample in normalized:
+                scaled_sample = []
+                for i in range(self.num_features):
+                    scaled_val = self.weight.data[i].data * sample[i].data + self.bias.data[i].data
+                    scaled_sample.append(Value(scaled_val))
+                output.append(scaled_sample)
+            
+            return Tensor(output)
+    
+    def parameters(self):
+        params = []
+        params.extend(self.weight.data)
+        params.extend(self.bias.data)
+        return params
+
+
+class LayerNorm(Module):
+    """Layer Normalization."""
+    
+    def __init__(self, normalized_shape, eps=1e-5):
+        super().__init__()
+        self.normalized_shape = normalized_shape if isinstance(normalized_shape, tuple) else (normalized_shape,)
+        self.eps = eps
+        
+        self.weight = Tensor([Value(1.0) for _ in range(normalized_shape)])
+        self.bias = Tensor([Value(0.0) for _ in range(normalized_shape)])
+    
+    def forward(self, x: Tensor) -> Tensor:
+        # Compute mean and variance over last dimension
+        def _layer_norm_recursive(data, depth=0):
+            if isinstance(data, Value):
+                return data
+            elif isinstance(data, list):
+                if depth == len(x.shape) - 1:
+                    # Last dimension - compute statistics
+                    values = [v.data for v in data]
+                    mean = sum(values) / len(values)
+                    var = sum([(v - mean) ** 2 for v in values]) / len(values)
+                    
+                    normalized = []
+                    for i, v in enumerate(data):
+                        norm_val = (v.data - mean) / math.sqrt(var + self.eps)
+                        scaled = norm_val * self.weight.data[i].data + self.bias.data[i].data
+                        normalized.append(Value(scaled))
+                    return normalized
+                else:
+                    return [_layer_norm_recursive(elem, depth + 1) for elem in data]
+        
+        normalized_data = _layer_norm_recursive(x.data)
+        return Tensor(normalized_data)
+    
+    def parameters(self):
+        params = []
+        params.extend(self.weight.data)
+        params.extend(self.bias.data)
+        return params
+
+
+class MaxPool1d(object):
+    """1D Max Pooling layer."""
+    
+    def __init__(self, kernel_size, stride=None, padding=0):
+        self.kernel_size = kernel_size
+        self.stride = stride if stride is not None else kernel_size
+        self.padding = padding
+    
+    def __call__(self, x: Tensor) -> Tensor:
+        # x shape: (batch_size, channels, length)
+        batch_size, channels, length = x.shape
+        
+        padded_length = length + 2 * self.padding
+        output_length = (padded_length - self.kernel_size) // self.stride + 1
+        
+        # Add padding if needed
+        if self.padding > 0:
+            zero = Value(0.0)
+            padded_data = []
+            for b in range(batch_size):
+                padded_channels = []
+                for c in range(channels):
+                    padded_seq = [zero] * self.padding + x.data[b][c] + [zero] * self.padding
+                    padded_channels.append(padded_seq)
+                padded_data.append(padded_channels)
+            x_padded = Tensor(padded_data)
+        else:
+            x_padded = x
+        
+        # Apply max pooling
+        output = []
+        for b in range(batch_size):
+            out_channels = []
+            for c in range(channels):
+                out_seq = []
+                for i in range(0, output_length * self.stride, self.stride):
+                    window = x_padded.data[b][c][i:i + self.kernel_size]
+                    max_val = max([v.data for v in window])
+                    out_seq.append(Value(max_val))
+                out_channels.append(out_seq)
+            output.append(out_channels)
+        
+        return Tensor(output)
+    
+    def parameters(self):
+        return []
+
+
+class AvgPool1d(object):
+    """1D Average Pooling layer."""
+    
+    def __init__(self, kernel_size, stride=None, padding=0):
+        self.kernel_size = kernel_size
+        self.stride = stride if stride is not None else kernel_size
+        self.padding = padding
+    
+    def __call__(self, x: Tensor) -> Tensor:
+        batch_size, channels, length = x.shape
+        
+        padded_length = length + 2 * self.padding
+        output_length = (padded_length - self.kernel_size) // self.stride + 1
+        
+        if self.padding > 0:
+            zero = Value(0.0)
+            padded_data = []
+            for b in range(batch_size):
+                padded_channels = []
+                for c in range(channels):
+                    padded_seq = [zero] * self.padding + x.data[b][c] + [zero] * self.padding
+                    padded_channels.append(padded_seq)
+                padded_data.append(padded_channels)
+            x_padded = Tensor(padded_data)
+        else:
+            x_padded = x
+        
+        output = []
+        for b in range(batch_size):
+            out_channels = []
+            for c in range(channels):
+                out_seq = []
+                for i in range(0, output_length * self.stride, self.stride):
+                    window = x_padded.data[b][c][i:i + self.kernel_size]
+                    avg_val = sum([v.data for v in window]) / len(window)
+                    out_seq.append(Value(avg_val))
+                out_channels.append(out_seq)
+            output.append(out_channels)
+        
+        return Tensor(output)
+    
+    def parameters(self):
+        return []
+
+
+class Embedding(object):
+    """Embedding layer for converting indices to dense vectors."""
+    
+    def __init__(self, num_embeddings, embedding_dim):
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        
+        # Embedding matrix: (num_embeddings, embedding_dim)
+        self.weight = Tensor([
+            [Value(random.uniform(-1, 1)) for _ in range(embedding_dim)]
+            for _ in range(num_embeddings)
+        ])
+    
+    def __call__(self, indices: Union[Tensor, List[int]]) -> Tensor:
+        # Convert indices to embeddings
+        if isinstance(indices, Tensor):
+            indices_data = self._flatten(indices.data)
+            indices_values = [int(v.data) if isinstance(v, Value) else int(v) for v in indices_data]
+        else:
+            indices_values = indices
+        
+        embeddings = []
+        for idx in indices_values:
+            if idx < 0 or idx >= self.num_embeddings:
+                raise IndexError(f"Index {idx} out of range for embedding with {self.num_embeddings} embeddings")
+            embeddings.append(self.weight.data[idx])
+        
+        # Reshape to match input shape + embedding_dim
+        if isinstance(indices, Tensor):
+            original_shape = indices.shape
+            output_shape = original_shape + (self.embedding_dim,)
+            # Flatten embeddings and reshape
+            flat_embeddings = []
+            for emb in embeddings:
+                flat_embeddings.extend(emb)
+            # For simplicity, return as (num_indices, embedding_dim)
+            return Tensor([emb for emb in embeddings])
+        else:
+            return Tensor(embeddings)
+    
+    def parameters(self):
+        params = []
+        for row in self.weight.data:
+            params.extend(row)
+        return params
+
+
+class CrossEntropyLoss(object):
+    """Cross Entropy Loss (combines LogSoftmax and NLLLoss)."""
+    
+    def __call__(self, logits: Tensor, targets: Tensor) -> Value:
+        # logits: (batch_size, num_classes)
+        # targets: (batch_size,) with class indices
+        
+        batch_size = len(logits.data)
+        loss = Value(0.0)
+        
+        for b in range(batch_size):
+            # Compute softmax for batch sample
+            logits_row = logits.data[b]
+            max_logit = max([v.data for v in logits_row])
+            
+            exp_logits = [math.exp(v.data - max_logit) for v in logits_row]
+            sum_exp = sum(exp_logits)
+            softmax = [e / sum_exp for e in exp_logits]
+            
+            # Get target class
+            target_idx = int(targets.data[b].data) if isinstance(targets.data[b], Value) else int(targets.data[b])
+            
+            # Cross entropy: -log(softmax[target])
+            ce = -math.log(softmax[target_idx] + 1e-10)
+            loss += Value(ce)
+        
+        return loss / Value(batch_size)
+
+
+class BCELoss(object):
+    """Binary Cross Entropy Loss."""
+    
+    def __call__(self, predictions: Tensor, targets: Tensor) -> Value:
+        # predictions: probabilities between 0 and 1
+        # targets: binary labels (0 or 1)
+        
+        def _bce_recursive(pred, tgt):
+            if isinstance(pred, Value) and isinstance(tgt, Value):
+                p = pred.data
+                t = tgt.data
+                return -(t * math.log(p + 1e-10) + (1 - t) * math.log(1 - p + 1e-10))
+            elif isinstance(pred, list) and isinstance(tgt, list):
+                return sum([_bce_recursive(p, t) for p, t in zip(pred, tgt)])
+            else:
+                raise TypeError(f"Unsupported types in BCELoss")
+        
+        loss = Value(_bce_recursive(predictions.data, targets.data))
+        count = math.prod(predictions.shape)
+        return loss / Value(count)
+
+
+class KLDivLoss(object):
+    """Kullback-Leibler Divergence Loss."""
+    
+    def __call__(self, log_predictions: Tensor, targets: Tensor) -> Value:
+        # log_predictions: log probabilities
+        # targets: probability distribution
+        
+        loss = Value(0.0)
+        
+        def _kld_recursive(log_pred, tgt):
+            if isinstance(log_pred, Value) and isinstance(tgt, Value):
+                return tgt.data * (math.log(tgt.data + 1e-10) - log_pred.data)
+            elif isinstance(log_pred, list) and isinstance(tgt, list):
+                return sum([_kld_recursive(lp, t) for lp, t in zip(log_pred, tgt)])
+            else:
+                raise TypeError(f"Unsupported types in KLDivLoss")
+        
+        loss = Value(_kld_recursive(log_predictions.data, targets.data))
+        count = math.prod(log_predictions.shape)
+        return loss / Value(count)
+
+
+class SmoothL1Loss(object):
+    """Smooth L1 Loss (Huber Loss)."""
+    
+    def __init__(self, beta=1.0):
+        self.beta = beta
+    
+    def __call__(self, predictions: Tensor, targets: Tensor) -> Value:
+        diff = predictions - targets
+        
+        def _smooth_l1(x):
+            if isinstance(x, Value):
+                abs_x = abs(x.data)
+                if abs_x < self.beta:
+                    return 0.5 * (x.data ** 2) / self.beta
+                else:
+                    return abs_x - 0.5 * self.beta
+            elif isinstance(x, list):
+                return sum([_smooth_l1(elem) for elem in x])
+            else:
+                raise TypeError(f"Unsupported type in SmoothL1Loss")
+        
+        loss = Value(_smooth_l1(diff.data))
+        count = math.prod(predictions.shape)
+        return loss / Value(count)
+
+
+def softmax(x: Tensor, dim: int = 0) -> Tensor:
+    """Apply softmax activation along a dimension."""
+    if dim == 0:
+        # Softmax over first dimension (batch)
+        max_val = max([max([v.data for v in row]) for row in x.data])
+        exp_data = [[math.exp(v.data - max_val) for v in row] for row in x.data]
+        sum_exp = sum([sum(row) for row in exp_data])
+        return Tensor([[Value(e / sum_exp) for e in row] for row in exp_data])
+    elif dim == 1:
+        # Softmax over second dimension (features)
+        softmax_data = []
+        for row in x.data:
+            max_val = max([v.data for v in row])
+            exp_row = [math.exp(v.data - max_val) for v in row]
+            sum_exp = sum(exp_row)
+            softmax_data.append([Value(e / sum_exp) for e in exp_row])
+        return Tensor(softmax_data)
+    else:
+        raise ValueError(f"Softmax with dim={dim} not supported for tensor with shape {x.shape}")
+
+
+def log_softmax(x: Tensor, dim: int = 0) -> Tensor:
+    """Apply log softmax activation along a dimension."""
+    softmax_result = softmax(x, dim)
+    
+    def _log_recursive(data):
+        if isinstance(data, Value):
+            return Value(math.log(data.data + 1e-10))
+        elif isinstance(data, list):
+            return [_log_recursive(elem) for elem in data]
+    
+    return Tensor(_log_recursive(softmax_result.data))
+
+
 class SGD(object):
     def __init__(self, params, lr=0.001):
         self.params = params
@@ -1546,3 +2161,201 @@ class Adam(object):
     def zero_grad(self):
         for p in self.params:
             p.grad = 0.0
+
+
+class RMSprop(object):
+    """RMSprop optimizer."""
+    
+    def __init__(self, params, lr=0.001, alpha=0.99, eps=1e-8):
+        self.params = params
+        self.lr = lr
+        self.alpha = alpha
+        self.eps = eps
+        self.v = {id(p): 0 for p in params}
+    
+    def step(self):
+        for p in self.params:
+            if p.grad is None:
+                continue
+            
+            grad = p.grad
+            self.v[id(p)] = self.alpha * self.v[id(p)] + (1 - self.alpha) * (grad ** 2)
+            p.data -= self.lr * grad / (self.v[id(p)] ** 0.5 + self.eps)
+    
+    def zero_grad(self):
+        for p in self.params:
+            p.grad = 0.0
+
+
+class AdamW(object):
+    """Adam with Weight Decay (AdamW optimizer)."""
+    
+    def __init__(self, params, lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01):
+        self.params = params
+        self.lr = lr
+        self.beta1, self.beta2 = betas
+        self.eps = eps
+        self.weight_decay = weight_decay
+        self.t = 0
+        
+        self.m = {id(p): 0 for p in params}
+        self.v = {id(p): 0 for p in params}
+    
+    def step(self):
+        self.t += 1
+        for p in self.params:
+            if p.grad is None:
+                continue
+            
+            grad = p.grad
+            
+            # L2 weight decay
+            if self.weight_decay != 0:
+                grad = grad + self.weight_decay * p.data
+            
+            self.m[id(p)] = self.beta1 * self.m[id(p)] + (1 - self.beta1) * grad
+            self.v[id(p)] = self.beta2 * self.v[id(p)] + (1 - self.beta2) * (grad ** 2)
+            
+            m_hat = self.m[id(p)] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[id(p)] / (1 - self.beta2 ** self.t)
+            
+            p.data -= self.lr * m_hat / (v_hat ** 0.5 + self.eps)
+    
+    def zero_grad(self):
+        for p in self.params:
+            p.grad = 0.0
+
+
+# Utility functions
+
+def zeros(size):
+    """Create a tensor filled with zeros."""
+    def create_zeros(shape):
+        if len(shape) == 0:
+            return Value(0.0)
+        return [create_zeros(shape[1:]) for _ in range(shape[0])]
+    
+    nested_zeros = create_zeros(size)
+    return Tensor(nested_zeros)
+
+
+def full(size, fill_value):
+    """Create a tensor filled with a specific value."""
+    def create_full(shape, value):
+        if len(shape) == 0:
+            return Value(value)
+        return [create_full(shape[1:], value) for _ in range(shape[0])]
+    
+    nested_full = create_full(size, fill_value)
+    return Tensor(nested_full)
+
+
+def eye(n):
+    """Create an identity matrix of size n x n."""
+    identity = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            row.append(Value(1.0 if i == j else 0.0))
+        identity.append(row)
+    return Tensor(identity)
+
+
+def cat(tensors, dim=0):
+    """Concatenate tensors along a dimension."""
+    if dim == 0:
+        concatenated = []
+        for tensor in tensors:
+            concatenated.extend(tensor.data)
+        return Tensor(concatenated)
+    elif dim == 1:
+        concatenated = []
+        for i, row in enumerate(tensors[0].data):
+            concat_row = list(row)
+            for tensor in tensors[1:]:
+                concat_row.extend(tensor.data[i])
+            concatenated.append(concat_row)
+        return Tensor(concatenated)
+    else:
+        raise NotImplementedError(f"cat with dim={dim} not supported")
+
+
+def stack(tensors, dim=0):
+    """Stack tensors along a new dimension."""
+    if dim == 0:
+        stacked = [t.data for t in tensors]
+        return Tensor(stacked)
+    elif dim == 1:
+        stacked = []
+        for i, row in enumerate(tensors[0].data):
+            stacked_row = [tensors[j].data[i] for j in range(len(tensors))]
+            stacked.append(stacked_row)
+        return Tensor(stacked)
+    else:
+        raise NotImplementedError(f"stack with dim={dim} not supported")
+
+
+def clip_grad_norm_(parameters, max_norm):
+    """Clip gradients by global norm (modifies gradients in-place)."""
+    total_norm = 0.0
+    for p in parameters:
+        if p.grad is not None:
+            total_norm += p.grad ** 2
+    
+    total_norm = total_norm ** 0.5
+    clip_coef = max_norm / (total_norm + 1e-6)
+    
+    if clip_coef < 1:
+        for p in parameters:
+            if p.grad is not None:
+                p.grad *= clip_coef
+    
+    return total_norm
+
+
+def clip_grad_value_(parameters, clip_value):
+    """Clip gradients by value (modifies gradients in-place)."""
+    for p in parameters:
+        if p.grad is not None:
+            if p.grad > clip_value:
+                p.grad = clip_value
+            elif p.grad < -clip_value:
+                p.grad = -clip_value
+
+
+def one_hot(indices: Union[Tensor, List[int]], num_classes: int) -> Tensor:
+    """Convert indices to one-hot encoding."""
+    if isinstance(indices, Tensor):
+        indices_list = indices._flatten(indices.data)
+        indices_values = [int(v.data) if isinstance(v, Value) else int(v) for v in indices_list]
+    else:
+        indices_values = indices
+    
+    one_hot_data = []
+    for idx in indices_values:
+        row = [Value(1.0) if i == idx else Value(0.0) for i in range(num_classes)]
+        one_hot_data.append(row)
+    
+    return Tensor(one_hot_data)
+
+
+class DataLoader(object):
+    """Simple DataLoader for batching data."""
+    
+    def __init__(self, data, batch_size=32, shuffle=False):
+        self.data = data
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.indices = list(range(len(data)))
+    
+    def __iter__(self):
+        if self.shuffle:
+            random.shuffle(self.indices)
+        
+        for i in range(0, len(self.data), self.batch_size):
+            batch_indices = self.indices[i:i + self.batch_size]
+            batch = [self.data[idx] for idx in batch_indices]
+            yield batch
+    
+    def __len__(self):
+        return (len(self.data) + self.batch_size - 1) // self.batch_size

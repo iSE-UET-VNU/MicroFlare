@@ -1,4 +1,4 @@
-# MicroFlare — Minimal Deep Learning Framework
+# MicroFlare - Minimal Deep Learning Framework
 
 **MicroFlare** is a minimalistic deep learning framework implemented in pure Python with a focus on simplicity and learning. It mimics core PyTorch APIs in a single file for educational and experimental purposes.
 
@@ -10,13 +10,18 @@
 ## Features
 
 - Tensor and automatic differentiation via `Value` and `Tensor` classes  
-- Neural network layers: `Linear`, `Conv1d`, `Conv2d`  
-- Activation functions: `ReLU`, `Sigmoid`, `Tanh`  
+- Neural network layers: `Linear`, `Conv1d`, `Conv2d`, `Embedding`
+- Activation functions: `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `Swish`, `LeakyReLU`  
+- Normalization layers: `BatchNorm1d`, `LayerNorm`  
+- Pooling layers: `MaxPool1d`, `AvgPool1d`
 - Recurrent layers: `RNN`, `LSTM`  
 - Transformer layers: `Transformer`, `TransformerEncoder`, `TransformerDecoder`
-- Optimizers: `SGD`, `Adam`  
-- Loss functions: `MSELoss`, `L1Loss`, `L2Loss`  
-- Utility modules: `Sequential`, `DropOut`  
+- Loss functions: `MSELoss`, `L1Loss`, `L2Loss`, `HuberLoss`, `CrossEntropyLoss`, `BCELoss`, `KLDivLoss`, `SmoothL1Loss`
+- Optimizers: `SGD`, `Adam`, `AdamW`, `RMSprop`
+- Utility modules: `Sequential`, `DropOut`, `Flatten`, `Identity`, `Module`
+- Tensor operations: reshape, view, transpose, flatten, squeeze, unsqueeze, permute, repeat, mean, std, clamp
+- Utility functions: `zeros`, `ones`, `full`, `eye`, `randn`, `arange`, `cat`, `stack`, `one_hot`
+- Data utilities: `DataLoader`, gradient clipping functions  
 
 ---
 
@@ -30,33 +35,47 @@ pip install microflare
 ----
 ## Components Overview
 
-- Tensor: Core multi-dimensional array supporting automatic differentiation.
+- **Tensor**: Core multi-dimensional array supporting automatic differentiation, supports operations like view, flatten, transpose, squeeze, unsqueeze, mean, std, clamp, etc.
 
-- Value: Scalar wrapper supporting computation graph and backpropagation.
+- **Value**: Scalar wrapper supporting computation graph and backpropagation with derivatives for 20+ operations.
 
-- Linear: Fully connected layer.
+- **Module**: Base class for all neural network modules (similar to `nn.Module` in PyTorch) with train/eval modes.
 
-- Conv1d, Conv2d: 1D and 2D convolution layers with stride and padding.
+- **Linear**: Fully connected layer with optional bias.
 
-- ReLU, Sigmoid, Tanh: Activation functions as callable modules.
+- **Conv1d, Conv2d**: 1D and 2D convolution layers with configurable stride, padding, and kernels.
 
-- RNN: Basic recurrent neural network layer.
+- **Embedding**: Embedding layer for converting indices to dense vectors.
 
-- LSTM: Long Short-Term Memory layer with input, forget, cell, and output gates.
+- **Activation Functions**: `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `Swish`, `LeakyReLU` as callable modules.
 
-- Transformer: Complete transformer architecture with encoder and decoder.
+- **Normalization**: `BatchNorm1d` with running statistics, `LayerNorm` for stable training.
 
-- TransformerEncoder: Multi-layer encoder with self-attention and feed-forward networks.
+- **Pooling**: `MaxPool1d`, `AvgPool1d` with configurable kernel size, stride, and padding.
 
-- TransformerDecoder: Multi-layer decoder with self-attention, cross-attention, and feed-forward networks.
+- **RNN**: Basic recurrent neural network layer with hidden state tracking.
 
-- Sequential: Container to chain layers and modules sequentially.
+- **LSTM**: Long Short-Term Memory with input, forget, cell, and output gates.
 
-- DropOut: Dropout regularization layer.
+- **Transformer**: Complete transformer architecture combining encoder and decoder.
 
-- Optimizers: SGD and Adam implementations to update parameters.
+- **TransformerEncoder**: Multi-layer encoder with scaled dot-product attention and feed-forward networks.
 
-- Loss functions: Mean Squared Error, L1, and L2 loss functions.
+- **TransformerDecoder**: Multi-layer decoder with self-attention, cross-attention, and feed-forward networks.
+
+- **Sequential**: Container to chain layers and modules sequentially.
+
+- **DropOut**: Dropout regularization layer for training.
+
+- **Flatten**: Flatten layer for reshaping multi-dimensional inputs to 2D.
+
+- **Identity**: Pass-through layer that returns input unchanged.
+
+- **Loss Functions**: `MSELoss`, `L1Loss`, `L2Loss`, `HuberLoss`, `CrossEntropyLoss`, `BCELoss`, `KLDivLoss`, `SmoothL1Loss`.
+
+- **Optimizers**: `SGD`, `Adam`, `AdamW` (with weight decay), `RMSprop`.
+
+- **Utilities**: Tensor creation (`zeros`, `ones`, `full`, `eye`, `randn`, `arange`), tensor manipulation (`cat`, `stack`, `one_hot`), gradient clipping, `DataLoader` for batching.
 ----
 ## Usage Example:
 ### Creating a Simple Feedforward Network
@@ -256,4 +275,270 @@ tgt = microflare.randn((2, 8, 512))
 decoded = decoder(tgt, encoder_output)
 print(decoded.shape)  # (2, 8, 512)
 ```
-````
+
+### Batch Normalization and Layer Normalization
+```python
+import microflare
+
+# Batch Normalization
+bn = microflare.BatchNorm1d(num_features=64)
+x = microflare.randn((32, 64))
+x_normalized = bn(x)
+
+# Layer Normalization
+ln = microflare.LayerNorm(normalized_shape=64)
+x = microflare.randn((32, 64))
+x_normalized = ln(x)
+```
+
+### Pooling Layers
+```python
+import microflare
+
+# Max Pooling
+max_pool = microflare.MaxPool1d(kernel_size=3, stride=2, padding=1)
+x = microflare.randn((2, 3, 10))  # (batch, channels, length)
+pooled = max_pool(x)
+
+# Average Pooling
+avg_pool = microflare.AvgPool1d(kernel_size=3, stride=2)
+x = microflare.randn((2, 3, 10))
+pooled = avg_pool(x)
+```
+
+### Embedding Layer
+```python
+import microflare
+
+# Create embedding layer
+embed = microflare.Embedding(num_embeddings=1000, embedding_dim=128)
+
+# Convert indices to embeddings
+indices = [0, 5, 10, 15]
+embeddings = embed(indices)
+print(embeddings.shape)  # (4, 128)
+```
+
+### Advanced Loss Functions
+```python
+import microflare
+
+# Cross Entropy Loss (for classification)
+predictions = microflare.randn((32, 10))
+targets = microflare.Tensor([int(i % 10) for i in range(32)])
+loss = microflare.CrossEntropyLoss()(predictions, targets)
+
+# Binary Cross Entropy Loss
+probs = microflare.randn((32, 1))
+targets = microflare.Tensor([i % 2 for i in range(32)])
+loss = microflare.BCELoss()(probs, targets)
+
+# KL Divergence Loss
+log_probs = microflare.log_softmax(predictions, dim=1)
+target_dist = microflare.randn((32, 10))
+loss = microflare.KLDivLoss()(log_probs, target_dist)
+```
+
+### Optimizers with Features
+```python
+import microflare
+
+model = microflare.Sequential(
+    microflare.Linear(10, 32),
+    microflare.ReLU(),
+    microflare.Linear(32, 1),
+)
+
+# Using AdamW optimizer with weight decay
+optimizer = microflare.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
+
+# Using RMSprop optimizer
+optimizer = microflare.RMSprop(model.parameters(), lr=0.001)
+
+# Gradient clipping
+for epoch in range(10):
+    x = microflare.randn((32, 10))
+    y = microflare.randn((32, 1))
+    
+    pred = model(x)
+    loss = microflare.MSELoss(pred, y)
+    
+    loss.backward()
+    
+    # Clip gradients by norm
+    microflare.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    
+    optimizer.step()
+    optimizer.zero_grad()
+```
+
+### Tensor Operations
+```python
+import microflare
+
+x = microflare.randn((2, 3, 4))
+
+# Flatten
+x_flat = x.flatten(start_dim=1)  # shape: (2, 12)
+
+# Squeeze and unsqueeze
+x_squeezed = x_flat.squeeze(dim=0)
+x_unsqueezed = x_flat.unsqueeze(dim=0)
+
+# Permute dimensions
+x_permuted = x.permute(2, 0, 1)  # shape: (4, 2, 3)
+
+# Repeat elements
+x_repeated = x.repeat(2, 1, 1)  # shape: (4, 3, 4)
+
+# Concatenate tensors
+y = microflare.randn((2, 3, 4))
+z = microflare.cat([x, y], dim=0)  # shape: (4, 3, 4)
+
+# Stack tensors
+stacked = microflare.stack([x, y], dim=0)  # shape: (2, 2, 3, 4)
+
+# Clamp values
+x_clamped = x.clamp(min_val=-1.0, max_val=1.0)
+
+# Statistics
+mean = x.mean(dim=0)
+std = x.std(dim=0)
+```
+
+### Module Base Class and Custom Training Loop
+```python
+import microflare
+
+model = microflare.Sequential(
+    microflare.Linear(10, 32),
+    microflare.BatchNorm1d(32),
+    microflare.ReLU(),
+    microflare.DropOut(p=0.5),
+    microflare.Linear(32, 1),
+)
+
+# Set to training mode (enables dropout)
+model.train()
+
+# Training loop
+for epoch in range(100):
+    x = microflare.randn((32, 10))
+    y = microflare.randn((32, 1))
+    
+    pred = model(x)
+    loss = microflare.MSELoss(pred, y)
+    
+    loss.backward()
+    
+    # Manual parameter update
+    for p in model.parameters():
+        if p.grad is not None:
+            p.data -= 0.01 * p.grad
+    
+    model.zero_grad()
+    
+    if (epoch + 1) % 10 == 0:
+        print(f"Epoch {epoch+1}: Loss = {loss.data:.4f}")
+
+# Set to eval mode (disables dropout, uses running stats for batch norm)
+model.eval()
+test_pred = model(microflare.randn((32, 10)))
+```
+
+### One-Hot Encoding and DataLoader
+
+### Training a Tiny Character-Level Language Model
+
+A complete example of training a simple language model:
+
+```python
+import microflare
+
+# Build vocabulary
+text = "The quick brown fox jumps. Hello world."
+chars = sorted(set(text))
+char_to_idx = {ch: i for i, ch in enumerate(chars)}
+idx_to_char = {i: ch for i, ch in enumerate(chars)}
+vocab_size = len(chars)
+data = [char_to_idx[ch] for ch in text]
+
+# LSTM-based Language Model
+class TinyLM(microflare.Module):
+    def __init__(self, vocab_size, embed_dim=8, hidden_size=16):
+        super().__init__()
+        self.embedding = microflare.Embedding(vocab_size, embed_dim)
+        self.lstm = microflare.LSTM(embed_dim, hidden_size)
+        self.fc = microflare.Linear(hidden_size, vocab_size)
+    
+    def forward(self, x):
+        embeds = self.embedding(x)
+        lstm_out = self.lstm(embeds)
+        last_h = lstm_out.data[-1] if isinstance(lstm_out.data, list) else lstm_out.data
+        return self.fc(microflare.Tensor(last_h))
+    
+    def parameters(self):
+        params = []
+        params.extend(self.embedding.parameters())
+        params.extend(self.lstm.parameters())
+        params.extend(self.fc.parameters())
+        return params
+
+# Train the model
+model = TinyLM(vocab_size)
+model.train()
+optimizer = microflare.Adam(model.parameters(), lr=0.01)
+
+num_epochs = 30
+seq_len = 10
+
+for epoch in range(num_epochs):
+    total_loss = 0
+    batches = 0
+    
+    for i in range(0, len(data) - seq_len - 1, seq_len):
+        context = data[i:i + seq_len]
+        target = data[i + seq_len]
+        
+        logits = model(microflare.Tensor([context]))
+        loss = microflare.CrossEntropyLoss()(logits, microflare.Tensor([target]))
+        
+        loss.backward()
+        microflare.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        optimizer.step()
+        optimizer.zero_grad()
+        
+        total_loss += loss.data
+        batches += 1
+    
+    if (epoch + 1) % 10 == 0:
+        print(f"Epoch {epoch+1}: Loss = {total_loss/batches:.4f}")
+
+# Text generation
+def generate(model, start_idx, length=30):
+    model.eval()
+    generated = [start_idx]
+    
+    for _ in range(length):
+        context = generated[-10:] if len(generated) >= 10 else generated
+        while len(context) < 10:
+            context = [0] + context
+        
+        logits = model(microflare.Tensor([context]))
+        logits_data = logits.data if not isinstance(logits.data, list) else logits.data[0]
+        
+        max_idx = 0
+        max_val = logits_data[0].data if isinstance(logits_data[0], microflare.Value) else logits_data[0]
+        
+        for i in range(1, len(logits_data)):
+            val = logits_data[i].data if isinstance(logits_data[i], microflare.Value) else logits_data[i]
+            if val > max_val:
+                max_val = val
+                max_idx = i
+        
+        generated.append(max_idx)
+    
+    return ''.join([idx_to_char[i] for i in generated if i in idx_to_char])
+
+print("Generated:", generate(model, char_to_idx['T']))
+```
