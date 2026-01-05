@@ -4,9 +4,96 @@ import random
 import math
 import copy
 
+# ==========================================
+# Device Detection and GPU Support
+# ==========================================
+
+# Try to import CuPy for GPU support
+try:
+    import cupy as cp
+    HAS_CUPY = True
+except ImportError:
+    cp = None
+    HAS_CUPY = False
+
+# Device management
+class Device:
+    """Device management for CPU/GPU computation."""
+    
+    def __init__(self, device_type: str = "auto"):
+        """
+        Initialize device.
+        Args:
+            device_type: "cpu", "gpu", or "auto" (auto-detect)
+        """
+        self.device_type = device_type
+        self._set_device()
+    
+    def _set_device(self):
+        """Set the device based on availability."""
+        if self.device_type == "auto":
+            self.device_type = "gpu" if HAS_CUPY else "cpu"
+        elif self.device_type == "gpu" and not HAS_CUPY:
+            print("Warning: CuPy not available, falling back to CPU")
+            self.device_type = "cpu"
+        elif self.device_type not in ["cpu", "gpu"]:
+            raise ValueError(f"Unknown device type: {self.device_type}")
+    
+    def is_gpu(self) -> bool:
+        return self.device_type == "gpu" and HAS_CUPY
+    
+    def is_cpu(self) -> bool:
+        return self.device_type == "cpu"
+    
+    def get_xp(self):
+        """Get the appropriate module (cupy or numpy)."""
+        return cp if self.is_gpu() else np
+
+# Global device
+_device = Device("auto")
+
+def set_device(device_type: str):
+    """Set the global device for all computations."""
+    global _device
+    _device = Device(device_type)
+    print(f"Device set to: {_device.device_type}")
+
+def get_device() -> Device:
+    """Get the current device."""
+    return _device
+
+def get_xp():
+    """Get the appropriate array module (cupy or numpy)."""
+    return _device.get_xp()
+
+# ==========================================
+# Array Operations Helper
+# ==========================================
+
+def _to_device(arr):
+    """Convert array to current device."""
+    if arr is None:
+        return None
+    
+    if _device.is_gpu():
+        if isinstance(arr, np.ndarray):
+            return cp.asarray(arr)
+        return arr
+    else:
+        if hasattr(arr, 'get'):  # CuPy array
+            return cp.asnumpy(arr)
+        return arr
+
+def _ensure_ndarray(arr):
+    """Ensure array is on correct device."""
+    if isinstance(arr, (int, float)):
+        return arr
+    return _to_device(arr)
+
 
 # https://docs.pytorch.org/docs/stable/torch.html
 def arange(start=0, end=0, step=1):
+    xp = get_xp()
     values = []
     current = start
     if step == 0:
@@ -34,13 +121,61 @@ def ones(size):
 
 
 def randn(size):
+    xp = get_xp()
     def create_randn(shape):
         if len(shape) == 0:
-            return Value(random.gauss(0, 1))
+            if _device.is_gpu():
+                return Value(float(cp.random.normal(0, 1)))
+            else:
+                return Value(random.gauss(0, 1))
         return [create_randn(shape[1:]) for _ in range(shape[0])]
 
     nested_randn = create_randn(size)
     return Tensor(nested_randn)
+
+
+def zeros(size):
+    """Create a tensor filled with zeros."""
+    def create_zeros(shape):
+        if len(shape) == 0:
+            return Value(0.0)
+        return [create_zeros(shape[1:]) for _ in range(shape[0])]
+    
+    nested_zeros = create_zeros(size)
+    return Tensor(nested_zeros)
+
+
+def full(size, fill_value):
+    """Create a tensor filled with a specific value."""
+    def create_full(shape, value):
+        if len(shape) == 0:
+            return Value(value)
+        return [create_full(shape[1:], value) for _ in range(shape[0])]
+    
+    nested_full = create_full(size, fill_value)
+    return Tensor(nested_full)
+
+
+def eye(n):
+    """Create an identity matrix of size n x n."""
+    identity = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            row.append(Value(1.0 if i == j else 0.0))
+        identity.append(row)
+    return Tensor(identity)
+
+
+def randint(size, low=0, high=10):
+    """Create a tensor filled with random integers."""
+    def create_randint(shape, low, high):
+        if len(shape) == 0:
+            return Value(float(random.randint(low, high - 1)))
+        return [create_randint(shape[1:], low, high) for _ in range(shape[0])]
+    
+    nested_randint = create_randint(size, low, high)
+    return Tensor(nested_randint)
 
 
 class Value:
@@ -182,7 +317,8 @@ class Value:
         return self.data != self._get_data(other)
 
     def tanh(self):
-        t = np.tanh(self.data)
+        xp = get_xp()
+        t = float(xp.tanh(self.data))
         out = Value(t, (self,), "tanh")
 
         def _backward():
@@ -201,7 +337,8 @@ class Value:
         return out
 
     def exp(self):
-        e = math.exp(self.data)
+        xp = get_xp()
+        e = float(xp.exp(self.data))
         out = Value(e, (self,), "exp")
 
         def _backward():
@@ -211,7 +348,8 @@ class Value:
         return out
 
     def log(self):
-        out = Value(math.log(self.data + 1e-20), (self,), "log")
+        xp = get_xp()
+        out = Value(float(xp.log(self.data + 1e-20)), (self,), "log")
 
         def _backward():
             self.grad += (1.0 / self.data) * out.grad
@@ -220,27 +358,30 @@ class Value:
         return out
 
     def sin(self):
-        s = math.sin(self.data)
+        xp = get_xp()
+        s = float(xp.sin(self.data))
         out = Value(s, (self,), "sin")
 
         def _backward():
-            self.grad += math.cos(self.data) * out.grad
+            self.grad += float(xp.cos(self.data)) * out.grad
 
         out._backward = _backward
         return out
 
     def cos(self):
-        c = math.cos(self.data)
+        xp = get_xp()
+        c = float(xp.cos(self.data))
         out = Value(c, (self,), "cos")
 
         def _backward():
-            self.grad += -math.sin(self.data) * out.grad
+            self.grad += -float(xp.sin(self.data)) * out.grad
 
         out._backward = _backward
         return out
 
     def tan(self):
-        t = math.tan(self.data)
+        xp = get_xp()
+        t = float(xp.tan(self.data))
         out = Value(t, (self,), "tan")
 
         def _backward():
@@ -250,7 +391,8 @@ class Value:
         return out
 
     def sigmoid(self):
-        s = 1 / (1 + math.exp(-self.data))
+        xp = get_xp()
+        s = float(1 / (1 + xp.exp(-self.data)))
         out = Value(s, (self,), "sigmoid")
 
         def _backward():
@@ -473,6 +615,23 @@ class Tensor:
                     _backward_recursive(elem)
 
         _backward_recursive(self.data)
+
+    def to(self, device_type: str) -> "Tensor":
+        """Move tensor to specified device (cpu or gpu)."""
+        set_device(device_type)
+        return self
+    
+    def cpu(self) -> "Tensor":
+        """Move tensor to CPU."""
+        return self.to("cpu")
+    
+    def gpu(self) -> "Tensor":
+        """Move tensor to GPU (if available)."""
+        return self.to("gpu")
+    
+    def device(self) -> str:
+        """Get current device."""
+        return get_device().device_type
 
     def sum(self, dim=None) -> Union["Tensor", Value]:
         # if dim = None => sum of ALL element in the matrix
@@ -1715,6 +1874,30 @@ class Module(object):
         """Zero the gradients of all parameters."""
         for p in self.parameters():
             p.grad = 0.0
+    
+    def to(self, device_type: str) -> "Module":
+        """Move module parameters to specified device.
+        
+        Args:
+            device_type: "cpu", "gpu", or "auto"
+            
+        Returns:
+            Self for method chaining
+        """
+        set_device(device_type)
+        return self
+    
+    def cpu(self) -> "Module":
+        """Move module to CPU."""
+        return self.to("cpu")
+    
+    def gpu(self) -> "Module":
+        """Move module to GPU."""
+        return self.to("gpu")
+    
+    def device(self) -> str:
+        """Get the device of module parameters."""
+        return get_device().device_type
 
 
 class BatchNorm1d(Module):

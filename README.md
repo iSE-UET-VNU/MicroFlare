@@ -32,6 +32,122 @@ Clone or download the repository and import the `microflare` module into your pr
 ```bash
 pip install microflare
 ```
+
+---
+
+## GPU Acceleration with CuPy
+
+MicroFlare supports GPU acceleration via **CuPy**. When available, it automatically uses GPU for computations. The framework gracefully falls back to CPU (NumPy) if CuPy is not installed.
+
+### Installation with GPU Support
+
+```bash
+# Install MicroFlare
+pip install microflare
+
+# Install CuPy (requires CUDA Toolkit)
+# For CUDA 11.x:
+pip install cupy-cuda11x
+
+# For CUDA 12.x:
+pip install cupy-cuda12x
+
+# Check your CUDA version:
+nvcc --version
+```
+
+### Device Management
+
+```python
+import microflare
+
+# Check available device
+print(microflare.get_device())  # Returns: cpu or gpu
+
+# Automatically detect and use GPU if available
+# (default behavior - happens on import)
+
+# Switch device at runtime
+microflare.set_device("gpu")  # Force GPU (if CuPy available)
+microflare.set_device("cpu")  # Force CPU
+microflare.set_device("auto") # Auto-detect (default)
+
+# Move tensors to specific device
+x = microflare.randn((100, 100))
+x.to("gpu")  # Move to GPU
+x.cpu()      # Move back to CPU
+x.gpu()      # Move to GPU again
+
+# Check current device
+print(x.device())  # Returns: "cpu" or "gpu"
+```
+
+### GPU Training Example
+
+```python
+import microflare
+
+# Enable GPU
+microflare.set_device("gpu")
+
+# Create model (weights automatically on GPU)
+model = microflare.Sequential(
+    microflare.Linear(784, 128),
+    microflare.ReLU(),
+    microflare.Linear(128, 10),
+)
+
+# Training data on GPU
+X_train = microflare.randn((1000, 784)).to("gpu")
+y_train = microflare.randint((1000,), 0, 10).to("gpu")
+
+# Create optimizer
+optimizer = microflare.Adam(model.parameters(), lr=0.001)
+loss_fn = microflare.CrossEntropyLoss()
+
+# Training loop
+for epoch in range(10):
+    # Forward pass (runs on GPU)
+    logits = model(X_train)
+    loss = loss_fn(logits, y_train)
+    
+    # Backward pass (GPU computation)
+    loss.backward()
+    
+    # Optimizer step
+    optimizer.step()
+    optimizer.zero_grad()
+    
+    if epoch % 2 == 0:
+        print(f"Epoch {epoch}, Loss: {loss.data:.4f}")
+```
+
+### Performance Notes
+
+- **GPU Benefits**: Significant speedup for large models and datasets (>10,000 parameters)
+- **CPU Better For**: Small models, prototyping, debugging
+- **Memory**: GPU memory is limited; reduce batch size if you hit CUDA out-of-memory errors
+- **Auto-fallback**: Framework works without CuPy; no code changes needed
+
+### Troubleshooting GPU Issues
+
+```python
+# Check if GPU is available
+import microflare
+if "gpu" in str(microflare.get_device()):
+    print("GPU is available!")
+else:
+    print("Running on CPU")
+
+# If GPU not detected but you have CUDA:
+# 1. Verify CUDA installation: nvcc --version
+# 2. Reinstall CuPy with correct CUDA version
+# 3. Check CUDA_HOME environment variable
+
+# Force CPU if GPU gives errors
+microflare.set_device("cpu")
+```
+
 ----
 ## Components Overview
 
